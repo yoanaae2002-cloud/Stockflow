@@ -1,0 +1,67 @@
+
+import threading
+import time
+from datos import STOCK_INICIAL, NUM_CAJAS, PEDIDOS
+
+# Crear el inventario inicial
+Inventario = STOCK_INICIAL.copy()
+
+
+def procesar_venta(caja, pedidos):
+
+    for pedido in pedidos:
+
+        numero, producto, unidades = pedido
+        
+
+        # Comprobar si hay stock suficiente
+        if Inventario[producto] >= unidades:
+            cantidad = Inventario[producto]
+
+            print(f"{caja}: Hay stock suficiente para {producto}")
+
+            # Simular un tiempo de espera para provocar
+            # que varios hilos comprueben el stock a la vez
+            if producto == "Router WiFi":
+                #Forzamos que espere más los que coinciden
+                time.sleep(3)
+            else:
+                time.sleep(1)
+
+          
+            print(f"Producto: {producto}")
+
+            # Descontar las unidades vendidas
+            Inventario[producto] = cantidad-unidades
+
+            print(f"{caja}: Venta realizada correctamente, quedan {Inventario[producto]} unidades")
+
+        else:
+            print(f"{caja}: Stock insuficiente para {producto}")
+
+
+
+
+# Lista para guardar los hilos
+hilos = []
+
+# Crear los hilos (una caja por hilo)
+for i in range(NUM_CAJAS):
+
+    pedidos_caja = PEDIDOS[i::NUM_CAJAS]
+
+    hilo = threading.Thread(target=procesar_venta,args=("Caja " + str(i + 1), pedidos_caja))
+
+    hilos.append(hilo)
+    hilo.start()
+
+# Esperar a que terminen todos los hilos
+for hilo in hilos:
+    hilo.join()
+
+
+# Mostrar el inventario final
+print("\nINVENTARIO FINAL:")
+
+for producto, unidades in Inventario.items():
+    print(f"{producto}: {unidades}")
