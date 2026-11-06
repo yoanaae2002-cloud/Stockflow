@@ -1,4 +1,3 @@
-
 import threading
 import time
 from datos import STOCK_INICIAL, NUM_CAJAS, PEDIDOS
@@ -6,40 +5,41 @@ from datos import STOCK_INICIAL, NUM_CAJAS, PEDIDOS
 # Crear el inventario inicial
 Inventario = STOCK_INICIAL.copy()
 
+# Lock que protege el acceso al inventario
+lock_inventario = threading.Lock()
+
 
 def procesar_venta(caja, pedidos):
 
     for pedido in pedidos:
 
         numero, producto, unidades = pedido
-        
 
-        # Comprobar si hay stock suficiente
-        if Inventario[producto] >= unidades:
-            cantidad = Inventario[producto]
+        # SECCIÓN CRÍTICA: comprobar stock + descontar, de forma atómica
+        with lock_inventario:
+            hay_stock = Inventario[producto] >= unidades
 
+            if hay_stock:
+                Inventario[producto] -= unidades
+                # Guardamos el valor dentro del lock para que el mensaje
+                # posterior sea coherente aunque otro hilo modifique el stock
+                quedan = Inventario[producto]
+        # FIN SECCIÓN CRÍTICA
+
+        # Todo lo que sigue no toca el inventario, así que va fuera del lock
+        if hay_stock:
             print(f"{caja}: Hay stock suficiente para {producto}")
 
-            # Simular un tiempo de espera para provocar
-            # que varios hilos comprueben el stock a la vez
             if producto == "Router WiFi":
-                #Forzamos que espere más los que coinciden
                 time.sleep(3)
             else:
                 time.sleep(1)
 
-          
             print(f"Producto: {producto}")
-
-            # Descontar las unidades vendidas
-            Inventario[producto] = cantidad-unidades
-
-            print(f"{caja}: Venta realizada correctamente, quedan {Inventario[producto]} unidades")
+            print(f"{caja}: Venta realizada correctamente, quedan {quedan} unidades")
 
         else:
             print(f"{caja}: Stock insuficiente para {producto}")
-
-
 
 
 # Lista para guardar los hilos
@@ -50,7 +50,7 @@ for i in range(NUM_CAJAS):
 
     pedidos_caja = PEDIDOS[i::NUM_CAJAS]
 
-    hilo = threading.Thread(target=procesar_venta,args=("Caja " + str(i + 1), pedidos_caja))
+    hilo = threading.Thread(target=procesar_venta, args=("Caja " + str(i + 1), pedidos_caja))
 
     hilos.append(hilo)
     hilo.start()
