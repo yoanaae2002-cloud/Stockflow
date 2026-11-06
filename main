@@ -1,15 +1,16 @@
 import threading
 import time
-from datos import STOCK_INICIAL, NUM_CAJAS, NUM_TERMINALES, PEDIDOS
+from datos import STOCK_INICIAL, NUM_CAJAS, NUM_TERMINALES, PEDIDOS, REPOSICIONES
 
-# Crear el inventario inicial
+NUM_ALMACENES = 1
+
 Inventario = STOCK_INICIAL.copy()
 
-# Lock: protege el inventario (exclusión mutua, un hilo a la vez)
-lock_inventario = threading.Lock()
+condicion = threading.Condition()
 
-# Semaphore: limita cuántas cajas pueden usar un terminal a la vez (hasta NUM_TERMINALES hilos simultáneos)
 semaforo_terminales = threading.Semaphore(NUM_TERMINALES)
+
+almacenes_activos = NUM_ALMACENES
 
 
 def procesar_venta(caja, pedidos):
@@ -18,8 +19,16 @@ def procesar_venta(caja, pedidos):
 
         numero, producto, unidades = pedido
 
-        # SECCIÓN CRÍTICA: comprobar stock + descontar
-        with lock_inventario:
+        # SECCIÓN CRÍTICA: esperar stock + descontar
+        with condicion:
+
+            # Mientras falte stock Y aún puedan llegar reposiciones, se espera.
+            # wait() libera el lock y duerme hasta que alguien haga notify.
+            # Al despertar, el while vuelve a comprobar el stock.
+            while Inventario[producto] < unidades and almacenes_activos > 0:
+                print(f"{caja}: Sin stock de {producto} ({numero}), esperando reposición...")
+                condicion.wait()
+
             hay_stock = Inventario[producto] >= unidades
 
             if hay_stock:
@@ -30,41 +39,58 @@ def procesar_venta(caja, pedidos):
         if hay_stock:
             print(f"{caja}: Hay stock suficiente para {producto} ({numero})")
 
-            # RECURSO LIMITADO (Semaphore): solo cobran NUM_TERMINALES cajas a la vez.
-            # Se hace fuera del lock para no bloquear el inventario mientras se cobra.
             print(f"{caja}: Esperando terminal de cobro...")
             with semaforo_terminales:
                 print(f"{caja}: OBTIENE un terminal ({numero})")
-
                 time.sleep(1)
-
                 print(f"{caja}: LIBERA el terminal ({numero})")
 
             print(f"{caja}: Venta realizada correctamente, quedan {quedan} unidades de {producto}")
 
         else:
-            print(f"{caja}: Stock insuficiente para {producto} ({numero})")
+            print(f"{caja}: Stock insuficiente para {producto} ({numero}), no habrá más reposiciones")
 
+
+def procesar_reposicion(almacen, reposiciones):
+    global almacenes_activos
+
+    for numero, producto, unidades in reposiciones:
+
+        time.sleep(2)
+
+        with condicion:
+            Inventario[producto] += unidades
+            print(f"{almacen}: Repuestas {unidades} unidades de {producto} ({numero})")
+
+            # Despierta a todas las cajas que esperan; cada una comprobará su producto
+            condicion.notify_all()
+
+    # Este almacén ha terminado: avisamos por si alguna caja sigue esperando
+    with condicion:
+        almacenes_activos -= 1
+        condicion.notify_all()
 
 
 hilos = []
 
-
+# Hilos de cajas
 for i in range(NUM_CAJAS):
-
     pedidos_caja = PEDIDOS[i::NUM_CAJAS]
-
     hilo = threading.Thread(target=procesar_venta, args=("Caja " + str(i + 1), pedidos_caja))
-
     hilos.append(hilo)
     hilo.start()
 
+# Hilos de almacén
+for i in range(NUM_ALMACENES):
+    reposiciones_almacen = REPOSICIONES[i::NUM_ALMACENES]
+    hilo = threading.Thread(target=procesar_reposicion, args=("Almacén " + str(i + 1), reposiciones_almacen))
+    hilos.append(hilo)
+    hilo.start()
 
 for hilo in hilos:
     hilo.join()
 
 
 print("\nINVENTARIO FINAL:")
-
 for producto, unidades in Inventario.items():
     print(f"{producto}: {unidades}")
