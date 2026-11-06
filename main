@@ -1,15 +1,21 @@
 import threading
 import time
-from datos import STOCK_INICIAL, NUM_CAJAS, NUM_TERMINALES, PEDIDOS, REPOSICIONES
+from datos import (STOCK_INICIAL, NUM_CAJAS, NUM_TERMINALES, NUM_REVISORES,PEDIDOS, REPOSICIONES)
 
-NUM_ALMACENES = 1
+NUM_ALMACENES = 2 
 
 Inventario = STOCK_INICIAL.copy()
 
+# Condition: protege el inventario y permite esperar/avisar
 condicion = threading.Condition()
 
+# Semaphore: limita cuántas cajas cobran a la vez
 semaforo_terminales = threading.Semaphore(NUM_TERMINALES)
 
+# Barrier: nadie pasa hasta que los NUM_REVISORES hilos hayan llegado
+barrera_revision = threading.Barrier(NUM_REVISORES)
+
+# Cuántos almacenes siguen trabajando
 almacenes_activos = NUM_ALMACENES
 
 
@@ -19,12 +25,7 @@ def procesar_venta(caja, pedidos):
 
         numero, producto, unidades = pedido
 
-        # SECCIÓN CRÍTICA: esperar stock + descontar
         with condicion:
-
-            # Mientras falte stock Y aún puedan llegar reposiciones, se espera.
-            # wait() libera el lock y duerme hasta que alguien haga notify.
-            # Al despertar, el while vuelve a comprobar el stock.
             while Inventario[producto] < unidades and almacenes_activos > 0:
                 print(f"{caja}: Sin stock de {producto} ({numero}), esperando reposición...")
                 condicion.wait()
@@ -34,7 +35,6 @@ def procesar_venta(caja, pedidos):
             if hay_stock:
                 Inventario[producto] -= unidades
                 quedan = Inventario[producto]
-        # FIN SECCIÓN CRÍTICA
 
         if hay_stock:
             print(f"{caja}: Hay stock suficiente para {producto} ({numero})")
@@ -61,14 +61,39 @@ def procesar_reposicion(almacen, reposiciones):
         with condicion:
             Inventario[producto] += unidades
             print(f"{almacen}: Repuestas {unidades} unidades de {producto} ({numero})")
-
-            # Despierta a todas las cajas que esperan; cada una comprobará su producto
             condicion.notify_all()
 
-    # Este almacén ha terminado: avisamos por si alguna caja sigue esperando
     with condicion:
         almacenes_activos -= 1
         condicion.notify_all()
+
+
+def resumen_final():
+    print("\nINVENTARIO FINAL:")
+    for producto, unidades in Inventario.items():
+        print(f"{producto}: {unidades}")
+
+
+def revisar_catalogo(revisor, productos):
+
+    # Cada revisor comprueba SOLO su parte del catálogo
+    for producto in productos:
+        time.sleep(0.5)
+
+        if Inventario[producto] >= 0:
+            print(f"{revisor}: {producto} revisado correctamente")
+        else:
+            print(f"{revisor}: ERROR, stock negativo en {producto}")
+
+    print(f"{revisor}: Ha terminado su revisión, espera en la barrera...")
+
+    # BARRIER: se bloquea aquí hasta que lleguen los NUM_REVISORES hilos.
+    indice = barrera_revision.wait()
+
+    # Solo un hilo (el que recibe 0) muestra el resumen, ya superada la barrera
+    if indice == 0:
+        print("\nTodos los revisores han terminado. Cierre autorizado.")
+        resumen_final()
 
 
 hilos = []
@@ -87,10 +112,21 @@ for i in range(NUM_ALMACENES):
     hilos.append(hilo)
     hilo.start()
 
+# Esperamos a que terminen cajas y almacenes antes de la revisión final
 for hilo in hilos:
     hilo.join()
 
+print("\n--- REVISIÓN FINAL DEL CATÁLOGO ---")
 
-print("\nINVENTARIO FINAL:")
-for producto, unidades in Inventario.items():
-    print(f"{producto}: {unidades}")
+# Hilos de revisión: se reparte el catálogo entre ellos
+catalogo = list(Inventario.keys())
+revisores = []
+
+for i in range(NUM_REVISORES):
+    productos_revisor = catalogo[i::NUM_REVISORES]
+    hilo = threading.Thread(target=revisar_catalogo, args=("Revisor " + str(i + 1), productos_revisor))
+    revisores.append(hilo)
+    hilo.start()
+
+for hilo in revisores:
+    hilo.join()
