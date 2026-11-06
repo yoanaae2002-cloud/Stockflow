@@ -1,12 +1,15 @@
 import threading
 import time
-from datos import STOCK_INICIAL, NUM_CAJAS, PEDIDOS
+from datos import STOCK_INICIAL, NUM_CAJAS, NUM_TERMINALES, PEDIDOS
 
 # Crear el inventario inicial
 Inventario = STOCK_INICIAL.copy()
 
-# Lock que protege el acceso al inventario
+# Lock: protege el inventario (exclusión mutua, un hilo a la vez)
 lock_inventario = threading.Lock()
+
+# Semaphore: limita cuántas cajas pueden usar un terminal a la vez (hasta NUM_TERMINALES hilos simultáneos)
+semaforo_terminales = threading.Semaphore(NUM_TERMINALES)
 
 
 def procesar_venta(caja, pedidos):
@@ -15,37 +18,38 @@ def procesar_venta(caja, pedidos):
 
         numero, producto, unidades = pedido
 
-        # SECCIÓN CRÍTICA: comprobar stock + descontar, de forma atómica
+        # SECCIÓN CRÍTICA: comprobar stock + descontar
         with lock_inventario:
             hay_stock = Inventario[producto] >= unidades
 
             if hay_stock:
                 Inventario[producto] -= unidades
-                # Guardamos el valor dentro del lock para que el mensaje
-                # posterior sea coherente aunque otro hilo modifique el stock
                 quedan = Inventario[producto]
         # FIN SECCIÓN CRÍTICA
 
-        # Todo lo que sigue no toca el inventario, así que va fuera del lock
         if hay_stock:
-            print(f"{caja}: Hay stock suficiente para {producto}")
+            print(f"{caja}: Hay stock suficiente para {producto} ({numero})")
 
-            if producto == "Router WiFi":
-                time.sleep(3)
-            else:
+            # RECURSO LIMITADO (Semaphore): solo cobran NUM_TERMINALES cajas a la vez.
+            # Se hace fuera del lock para no bloquear el inventario mientras se cobra.
+            print(f"{caja}: Esperando terminal de cobro...")
+            with semaforo_terminales:
+                print(f"{caja}: OBTIENE un terminal ({numero})")
+
                 time.sleep(1)
 
-            print(f"Producto: {producto}")
-            print(f"{caja}: Venta realizada correctamente, quedan {quedan} unidades")
+                print(f"{caja}: LIBERA el terminal ({numero})")
+
+            print(f"{caja}: Venta realizada correctamente, quedan {quedan} unidades de {producto}")
 
         else:
-            print(f"{caja}: Stock insuficiente para {producto}")
+            print(f"{caja}: Stock insuficiente para {producto} ({numero})")
 
 
-# Lista para guardar los hilos
+
 hilos = []
 
-# Crear los hilos (una caja por hilo)
+
 for i in range(NUM_CAJAS):
 
     pedidos_caja = PEDIDOS[i::NUM_CAJAS]
@@ -55,12 +59,11 @@ for i in range(NUM_CAJAS):
     hilos.append(hilo)
     hilo.start()
 
-# Esperar a que terminen todos los hilos
+
 for hilo in hilos:
     hilo.join()
 
 
-# Mostrar el inventario final
 print("\nINVENTARIO FINAL:")
 
 for producto, unidades in Inventario.items():
