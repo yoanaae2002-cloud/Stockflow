@@ -1,9 +1,13 @@
 import threading
 import time
-from datos import (STOCK_INICIAL, NUM_CAJAS, NUM_TERMINALES, NUM_REVISORES, PEDIDOS, REPOSICIONES)
+from datos import (STOCK_INICIAL, NUM_CAJAS, NUM_TERMINALES, NUM_REVISORES, PEDIDOS, REPOSICIONES,TIEMPO_COBRO,TIEMPO_REPOSICION,CANCELACIONES)
 
 
 NUM_ALMACENES = 1
+ESTADOS = {}
+for pedido in PEDIDOS:
+    id_pedido,producto,unidades = pedido
+    ESTADOS[id_pedido] = "PENDIENTE"
 
 # ======================================================================
 # ORDEN GLOBAL DE RECURSOS: 1º inventario, 2º terminales, 3º barrera.
@@ -45,6 +49,7 @@ class GestorInventario:
 
             # REGLA: while y NO if. Hay que volver a comprobar al despertar.
             while not self.hay_stock(producto, unidades) and self._almacenes_activos > 0:
+                ESTADOS[numero] = "ESPERANDO_STOCK"
 
                 print(f"{caja}: Sin stock de {producto} ({numero}), esperando reposición...")
 
@@ -85,6 +90,8 @@ class GestorInventario:
         print("\nINVENTARIO FINAL:")
         for producto, unidades in copia.items():
             print(f"{producto}: {unidades}")
+        for pedido, estado in ESTADOS.items():
+             print(f"{pedido}: {estado}")
 
 
 gestor = GestorInventario(STOCK_INICIAL, NUM_ALMACENES)
@@ -104,33 +111,63 @@ barrera_revision = threading.Barrier(NUM_REVISORES, action=cierre)
 
 
 def procesar_venta(caja, pedidos):
+    
+
 
     for numero, producto, unidades in pedidos:
+
 
         # El lock del inventario ya está SOLTADO cuando retirar() devuelve.
         quedan = gestor.retirar(caja, numero, producto, unidades)
 
-        if quedan is not None:
+
+        
+
+        if quedan is not None and (ESTADOS[numero] != "CANCELADO"):
             print(f"{caja}: Hay stock suficiente para {producto} ({numero})")
 
             # NO meter el cobro dentro de retirar(): mantendría el lock del
             # inventario durante el sleep y abriría la puerta al deadlock.
             print(f"{caja}: Esperando terminal de cobro...")
             with semaforo_terminales:
+                
+                ESTADOS[numero] = "EN_COBRO"
                 print(f"{caja}: OBTIENE un terminal ({numero})")
-                time.sleep(1)  #duración del cobro
+                time.sleep(TIEMPO_COBRO)  #duración del cobro
                 print(f"{caja}: LIBERA el terminal ({numero})")
 
+
+
+            ESTADOS[numero] = "COMPLETADO"
             print(f"{caja}: Venta realizada correctamente, quedan {quedan} unidades de {producto}")
 
+
         else:
+            ESTADOS[numero] = "SIN STOCK"
             print(f"{caja}: Stock insuficiente para {producto} ({numero}), no habrá más reposiciones")
+
+
+lock_cancelacion = threading.Lock()
+def cancelar_pedido(id_solicitud,id_pedido,segundo_solicitud):
+    with lock_cancelacion:
+        for pedido,estado in ESTADOS.items():
+            if pedido == id_pedido:
+
+                if estado == "PENDIENTE":
+                    print(f"{id_solicitud} : Cancelando pedido {pedido}")
+                    time.sleep(segundo_solicitud)
+                    ESTADOS[pedido] = "CANCELADO"
+                    print(f"Pedido  {pedido} cancelado correctamente")
+
+        
+            
+
 
 
 def procesar_reposicion(almacen, reposiciones):
 
     for numero, producto, unidades in reposiciones:
-        time.sleep(4)  #duración de cada reposición
+        time.sleep(TIEMPO_REPOSICION)  #duración de cada reposición
         gestor.reponer(almacen, numero, producto, unidades)
 
     # Solo se ejecuta al terminar TODOS los albaranes de este almacén
@@ -169,6 +206,14 @@ for i in range(NUM_ALMACENES):
     hilos.append(hilo)
     hilo.start()
 
+for cancelacion in CANCELACIONES:
+    id_solicitud,id_pedido,segundo_solicitud = cancelacion
+    hilo = threading.Thread(target=cancelar_pedido, args=(id_solicitud,id_pedido,segundo_solicitud) )
+    hilos.append(hilo)
+    hilo.start()
+
+
+
 # Los revisores empiezan DESPUÉS de estos join(), así que durante la
 # revisión el inventario ya no cambia.
 for hilo in hilos:
@@ -187,3 +232,4 @@ for i in range(NUM_REVISORES):
 
 for hilo in revisores:
     hilo.join()
+
